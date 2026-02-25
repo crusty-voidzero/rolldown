@@ -149,7 +149,7 @@ Any ──(Close)──→ Closing → Closed
 ```rust
 enum WatcherState {
     Idle,
-    Debouncing { changes: Vec<FileChangeEvent>, deadline: Instant },
+    Debouncing { changes: FxIndexMap<String, WatcherChangeKind>, deadline: Instant },
     Closing,
     Closed,
 }
@@ -387,11 +387,9 @@ Tracks progress from old watcher → new `rolldown_watcher`. Items link to [#648
 
 ### Missing Features (todo)
 
-- [ ] Bulk change handling — `git checkout` can produce thousands of file changes. Current issues:
-  - O(n²) dedup: `on_file_change()` does `Vec::find()` per change. Should use `IndexMap<String, WatcherChangeKind>` (matches Rollup's `invalidatedIds: Map`).
+- [x] Bulk change handling — `FxIndexMap` storage for O(1) dedup, batch `on_file_changes()` API with single state transition per batch. Remaining items:
   - Per-change bundler lock: `call_on_invalidate()` acquires the bundler mutex for each change individually.
-  - Per-change state transition: each change moves/reconstructs the `WatcherState` enum and reads the clock.
-  - `process_file_changes()` should accept the batch, do a single state transition, and batch `on_invalidate`.
+  - See Future section for bulk-change threshold optimization (skipping per-file hooks for large batches).
 - [ ] Resolver cache invalidation between rebuilds ([#6482](https://github.com/rolldown/rolldown/issues/6482))
 - [ ] `skipWrite` support — check `options.watch.skip_write`, call `generate()` instead of `write()`
 - [ ] File unwatching — `update_watch_files()` only adds, never removes. Watch set grows monotonically
@@ -402,6 +400,7 @@ Tracks progress from old watcher → new `rolldown_watcher`. Items link to [#648
 - [ ] Non-blocking builds — spawn builds instead of inline `await` (see Unresolved Questions)
 - [ ] Incremental builds — `WatchTask::build()` currently does full rebuild via `bundler.write()`
 - [ ] Parallel task builds within a single coordinator
+- [ ] Bulk-change threshold optimization — For bulk changes (e.g. `git checkout` producing 1000+ file events), we could skip per-file `on_change`/`watchChange` hooks and just do a full rebuild. Rollup doesn't do this — it always calls per-file hooks regardless of volume. This is a potential future optimization if per-file hook overhead becomes a performance issue.
 
 ## Unresolved Questions
 
