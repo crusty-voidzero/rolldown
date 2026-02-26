@@ -1690,8 +1690,13 @@ export declare class BindingTransformPluginContext {
 
 export declare class BindingWatcher {
   constructor(options: Array<BindingBundlerOptions>, notifyOption?: BindingNotifyOption | undefined | null)
-  close(): Promise<void>
   start(listener: (data: BindingWatcherEvent) => void): Promise<void>
+  /**
+   * Returns a Promise that resolves when the watcher closes.
+   * The pending Promise keeps Node.js event loop alive (replaces setInterval hack).
+   */
+  waitForClose(): Promise<void>
+  close(): Promise<void>
 }
 
 /**
@@ -1709,10 +1714,10 @@ export declare class BindingWatcherChangeData {
 
 export declare class BindingWatcherEvent {
   eventKind(): string
-  watchChangeData(): BindingWatcherChangeData
-  bundleEndData(): BindingBundleEndEventData
   bundleEventKind(): string
+  bundleEndData(): BindingBundleEndEventData
   bundleErrorData(): BindingBundleErrorEventData
+  watchChangeData(): BindingWatcherChangeData
 }
 
 export declare class ParallelJsPluginRegistry {

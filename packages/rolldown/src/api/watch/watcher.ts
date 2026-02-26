@@ -1,6 +1,7 @@
-import { BindingWatcher, shutdownAsyncRuntime } from '../../binding.cjs';
+import { type BindingWatcherEvent, BindingWatcher, shutdownAsyncRuntime } from '../../binding.cjs';
 import { LOG_LEVEL_WARN } from '../../log/logging';
 import { logMultiplyNotifyOption } from '../../log/logs';
+import { aggregateBindingErrorsIntoJsError } from '../../utils/error';
 import type { WatchOptions } from '../../options/watch-options';
 import { PluginDriver } from '../../plugin/plugin-driver';
 import {
@@ -42,9 +43,56 @@ class Watcher {
     shutdownAsyncRuntime();
   }
 
+  private createEventCallback(): (event: BindingWatcherEvent) => Promise<void> {
+    const emitter = this.emitter;
+    return async (event: BindingWatcherEvent) => {
+      switch (event.eventKind()) {
+        case 'event': {
+          const code = event.bundleEventKind();
+          if (code === 'BUNDLE_END') {
+            const { duration, output, result } = event.bundleEndData();
+            await emitter.emit('event', {
+              code: 'BUNDLE_END',
+              duration,
+              output: [output],
+              result,
+            });
+          } else if (code === 'ERROR') {
+            const data = event.bundleErrorData();
+            await emitter.emit('event', {
+              code: 'ERROR',
+              error: aggregateBindingErrorsIntoJsError(data.error),
+              result: data.result,
+            });
+          } else {
+            await emitter.emit('event', { code: code as 'START' | 'BUNDLE_START' | 'END' });
+          }
+          break;
+        }
+        case 'change': {
+          const { path, kind } = event.watchChangeData();
+          await emitter.emit('change', path, {
+            event: kind as 'create' | 'update' | 'delete',
+          });
+          break;
+        }
+        case 'restart':
+          await emitter.emit('restart');
+          break;
+        case 'close':
+          await emitter.emit('close');
+          break;
+      }
+    };
+  }
+
   start(): void {
     // run first build after listener is attached
-    process.nextTick(() => this.inner.start(this.emitter.onEvent.bind(this.emitter)));
+    process.nextTick(async () => {
+      await this.inner.start(this.createEventCallback());
+      // Pending Promise keeps Node.js event loop alive — no setInterval needed
+      this.inner.waitForClose();
+    });
   }
 }
 

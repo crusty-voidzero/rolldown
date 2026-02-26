@@ -9,11 +9,13 @@ use rolldown::BundlerConfig;
 use rolldown_common::NotifyOption;
 use rolldown_error::BuildResult;
 use rolldown_fs_watcher::{FsWatcher, FsWatcherConfig, RecommendedFsWatcher};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 
-/// Default debounce duration in milliseconds
-const DEFAULT_DEBOUNCE_MS: u64 = 100;
+/// Default debounce duration in milliseconds.
+/// Matches Rollup's default buildDelay of 0ms.
+const DEFAULT_DEBOUNCE_MS: u64 = 0;
 
 /// Configuration for the watcher
 #[derive(Debug, Clone, Default)]
@@ -46,6 +48,7 @@ impl WatcherConfig {
 pub struct Watcher {
   tx: mpsc::UnboundedSender<WatcherMsg>,
   task_handle: tokio::task::JoinHandle<()>,
+  closed_notify: Arc<Notify>,
 }
 
 impl Drop for Watcher {
@@ -86,11 +89,26 @@ impl Watcher {
     }
 
     let coordinator = WatchCoordinator::new(rx, handler, tasks, watcher_config);
+    let closed_notify = Arc::new(Notify::new());
+    let notify_clone = Arc::clone(&closed_notify);
     let task_handle = tokio::spawn(async move {
       coordinator.run().await;
+      notify_clone.notify_waiters();
     });
 
-    Ok(Self { tx, task_handle })
+    Ok(Self { tx, task_handle, closed_notify })
+  }
+
+  /// Get the closed notification handle.
+  /// Useful for NAPI bindings where the lock can't be held across await points.
+  pub fn closed_notify(&self) -> Arc<Notify> {
+    Arc::clone(&self.closed_notify)
+  }
+
+  /// Wait until the watcher coordinator finishes (i.e., after close).
+  /// On NAPI side, the pending Promise keeps Node.js event loop alive.
+  pub async fn wait_for_close(&self) {
+    self.closed_notify.notified().await;
   }
 
   /// Close the watcher
